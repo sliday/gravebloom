@@ -1,4 +1,4 @@
-import { ActivePiece, CellCoord, GameSnapshot, PlayerId, SimEvent } from '../sim/types';
+import { ActivePiece, CellCoord, GameSnapshot, PlayerId, SimEvent, UnitType } from '../sim/types';
 import { CHESS_PIECES } from '../sim/units';
 import { BOARD_COLS, BOARD_ROWS, getChebyshevDistance, getLegalKingMoves, getKnightLTargets } from '../sim/board';
 import { sprites } from './sprites';
@@ -31,7 +31,7 @@ interface CombatStrike {
   toX: number;
   toY: number;
   color: string;
-  pieceType: string;
+  pieceType: UnitType;
   progress: number;
   duration: number;
   damage: number;
@@ -55,11 +55,36 @@ interface TrailLine {
   toX: number;
   toY: number;
   color: string;
+  pieceType: UnitType;
   isKnightL?: boolean;
   cornerX?: number;
   cornerY?: number;
   alpha: number;
 }
+
+interface PieceBurst {
+  x: number;
+  y: number;
+  color: string;
+  pieceType: UnitType;
+  kind: 'deploy' | 'death';
+  progress: number;
+  duration: number;
+}
+
+export const PIECE_EFFECT_PROFILES: Record<UnitType, {
+  signature: string;
+  deployDuration: number;
+  strikeDuration: number;
+  particleCount: number;
+}> = {
+  pawn: { signature: 'seed', deployDuration: 0.65, strikeDuration: 0.28, particleCount: 8 },
+  knight: { signature: 'l-rune', deployDuration: 0.78, strikeDuration: 0.46, particleCount: 10 },
+  bishop: { signature: 'prism', deployDuration: 0.82, strikeDuration: 0.38, particleCount: 12 },
+  rook: { signature: 'bastion', deployDuration: 0.9, strikeDuration: 0.54, particleCount: 14 },
+  queen: { signature: 'bloom', deployDuration: 1.1, strikeDuration: 0.68, particleCount: 18 },
+  king: { signature: 'ward', deployDuration: 0.95, strikeDuration: 0.58, particleCount: 16 }
+};
 
 interface PromotionCoronation {
   x: number;
@@ -89,6 +114,7 @@ export class GameRenderer {
   private floatingTexts: FloatingText[] = [];
   private combatStrikes: CombatStrike[] = [];
   private moveTrails: TrailLine[] = [];
+  private pieceBursts: PieceBurst[] = [];
   private coronations: PromotionCoronation[] = [];
   private screenFlash = 0;
 
@@ -187,15 +213,17 @@ export class GameRenderer {
       if (ev.type === 'deploy') {
         const pos = this.cellToScreen(ev.col, ev.row);
         const def = CHESS_PIECES[ev.defId];
+        const pieceType = def?.pieceType ?? 'pawn';
         const color = ev.playerId === 'player' ? '#39D0FF' : '#FF4FD8';
-        this.spawnFloatingText(pos.x, pos.y - 12, `+${def?.name.toUpperCase() ?? 'PIECE'}`, color);
-        this.spawnHitParticles(pos.x, pos.y, color, 12);
+        this.spawnFloatingText(pos.x, pos.y - this.cellSize * 0.78, `+${def?.name.toUpperCase() ?? 'PIECE'}`, color);
+        this.spawnPieceBurst(pos.x, pos.y, pieceType, color, 'deploy');
+        this.spawnHitParticles(pos.x, pos.y, color, PIECE_EFFECT_PROFILES[pieceType].particleCount);
       } else if (ev.type === 'attack') {
         const targetPos = this.cellToScreen(ev.col, ev.row);
 
         // Find attacker position
         let attackerPos = targetPos;
-        let attackerPieceType = 'pawn';
+        let attackerPieceType: UnitType = 'pawn';
         let attackerOwner: PlayerId = 'player';
 
         if (snap) {
@@ -224,7 +252,7 @@ export class GameRenderer {
           color,
           pieceType: attackerPieceType,
           progress: 0,
-          duration: 0.45,
+          duration: PIECE_EFFECT_PROFILES[attackerPieceType].strikeDuration,
           damage: ev.damage
         });
 
@@ -234,6 +262,12 @@ export class GameRenderer {
         } else {
           this.spawnFloatingText(targetPos.x, targetPos.y - 16, `-${ev.damage}`, '#FFE600');
         }
+      } else if (ev.type === 'piece_death') {
+        const pos = this.cellToScreen(ev.col, ev.row);
+        const pieceType = CHESS_PIECES[ev.defId]?.pieceType ?? 'pawn';
+        const color = ev.owner === 'player' ? '#39D0FF' : '#FF4FD8';
+        this.spawnPieceBurst(pos.x, pos.y, pieceType, color, 'death');
+        this.spawnHitParticles(pos.x, pos.y, color, PIECE_EFFECT_PROFILES[pieceType].particleCount);
       } else if (ev.type === 'bounty') {
         const pos = this.cellToScreen(ev.col, ev.row);
         this.spawnHitParticles(pos.x, pos.y, '#FFE600', 16);
@@ -249,10 +283,12 @@ export class GameRenderer {
           toX: toPos.x,
           toY: toPos.y,
           color,
+          pieceType: 'king',
           alpha: 1.0
         });
 
-        this.spawnFloatingText(toPos.x, toPos.y - 16, 'KING EVADES!', color);
+        this.spawnFloatingText(toPos.x, toPos.y - this.cellSize * 0.7, 'KING EVADES!', color);
+        this.spawnPieceBurst(toPos.x, toPos.y, 'king', color, 'deploy');
         this.spawnHitParticles(toPos.x, toPos.y, color, 14);
       } else if (ev.type === 'king_damage') {
         const targetRow = ev.targetPlayerId === 'player' ? 1 : BOARD_ROWS;
@@ -277,6 +313,25 @@ export class GameRenderer {
         this.screenFlash = 0.5;
       }
     }
+  }
+
+  private spawnPieceBurst(
+    x: number,
+    y: number,
+    pieceType: UnitType,
+    color: string,
+    kind: 'deploy' | 'death'
+  ): void {
+    const profile = PIECE_EFFECT_PROFILES[pieceType];
+    this.pieceBursts.push({
+      x,
+      y,
+      color,
+      pieceType,
+      kind,
+      progress: 0,
+      duration: kind === 'deploy' ? profile.deployDuration : profile.deployDuration * 0.8
+    });
   }
 
   private spawnHitParticles(x: number, y: number, color: string, count: number): void {
@@ -337,6 +392,8 @@ export class GameRenderer {
     // 6. Draw Kings & Pieces with smooth positions
     this.drawPieces(snap);
 
+    this.drawMoveTrailEmblems();
+
     // 7. Draw Connected Pawns Link-Lines (-20% damage synergy)
     this.drawConnectedPawnLinks(snap);
 
@@ -392,6 +449,7 @@ export class GameRenderer {
               cornerX,
               cornerY,
               color: trailColor,
+              pieceType: p.pieceType,
               alpha: 1.0
             });
             disp.isJumping = true;
@@ -403,6 +461,7 @@ export class GameRenderer {
               toX: target.x,
               toY: target.y,
               color: trailColor,
+              pieceType: p.pieceType,
               alpha: 1.0
             });
           }
@@ -545,19 +604,84 @@ export class GameRenderer {
       grad.addColorStop(1, `rgba(${c}, ${trail.alpha * 0.7})`);
 
       ctx.strokeStyle = grad;
-      ctx.lineWidth = 2.5;
-      ctx.setLineDash([4, 3]);
+      const dx = trail.toX - trail.fromX;
+      const dy = trail.toY - trail.fromY;
+      const distance = Math.max(1, Math.hypot(dx, dy));
+      const normalX = -dy / distance;
+      const normalY = dx / distance;
 
-      ctx.beginPath();
-      if (trail.isKnightL && trail.cornerX !== undefined && trail.cornerY !== undefined) {
+      if (trail.pieceType === 'knight' && trail.cornerX !== undefined && trail.cornerY !== undefined) {
+        ctx.lineWidth = 3;
+        ctx.setLineDash([6, 2]);
+        ctx.beginPath();
         ctx.moveTo(trail.fromX, trail.fromY);
         ctx.lineTo(trail.cornerX, trail.cornerY);
         ctx.lineTo(trail.toX, trail.toY);
+        ctx.stroke();
+        ctx.fillStyle = trail.color;
+        ctx.globalAlpha = trail.alpha * 0.8;
+        ctx.fillRect(trail.cornerX - 2, trail.cornerY - 2, 4, 4);
+      } else if (trail.pieceType === 'bishop') {
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([2, 3]);
+        for (const offset of [-2.5, 2.5]) {
+          ctx.beginPath();
+          ctx.moveTo(trail.fromX + normalX * offset, trail.fromY + normalY * offset);
+          ctx.lineTo(trail.toX + normalX * offset, trail.toY + normalY * offset);
+          ctx.stroke();
+        }
       } else {
+        ctx.lineWidth = trail.pieceType === 'rook' ? 4.5 : trail.pieceType === 'king' ? 3 : 2.5;
+        ctx.setLineDash(trail.pieceType === 'pawn' ? [2, 4] : trail.pieceType === 'queen' ? [1, 3] : []);
+        ctx.lineCap = trail.pieceType === 'rook' ? 'square' : 'butt';
+        ctx.beginPath();
         ctx.moveTo(trail.fromX, trail.fromY);
         ctx.lineTo(trail.toX, trail.toY);
+        ctx.stroke();
       }
-      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  private drawMoveTrailEmblems(): void {
+    const ctx = this.ctx;
+
+    for (const trail of this.moveTrails) {
+      if (trail.pieceType !== 'rook' && trail.pieceType !== 'queen' && trail.pieceType !== 'king') continue;
+
+      const radius = this.cellSize * (trail.pieceType === 'king' ? 0.34 : 0.31);
+      ctx.save();
+      ctx.globalAlpha = trail.alpha * 0.72;
+      ctx.strokeStyle = trail.pieceType === 'king' ? '#FFE600' : trail.color;
+      ctx.lineWidth = 1.75;
+      ctx.shadowColor = ctx.strokeStyle;
+      ctx.shadowBlur = 6;
+
+      if (trail.pieceType === 'rook') {
+        ctx.strokeRect(trail.toX - radius, trail.toY - radius, radius * 2, radius * 2);
+      } else if (trail.pieceType === 'queen') {
+        ctx.beginPath();
+        for (let point = 0; point < 8; point++) {
+          const angle = -Math.PI / 2 + point * Math.PI / 4;
+          const pointRadius = point % 2 === 0 ? radius : radius * 0.72;
+          const x = trail.toX + Math.cos(angle) * pointRadius;
+          const y = trail.toY + Math.sin(angle) * pointRadius;
+          point === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+        }
+        ctx.closePath();
+        ctx.stroke();
+      } else {
+        ctx.beginPath();
+        for (let point = 0; point < 6; point++) {
+          const angle = -Math.PI / 2 + point * Math.PI / 3;
+          const x = trail.toX + Math.cos(angle) * radius;
+          const y = trail.toY + Math.sin(angle) * radius;
+          point === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+        }
+        ctx.closePath();
+        ctx.stroke();
+      }
+
       ctx.restore();
     }
   }
@@ -923,12 +1047,12 @@ export class GameRenderer {
     }
 
     // Health Bar
-    this.drawHealthBar(pos.x, pos.y - this.cellSize * 0.46, king.hp, king.maxHp, owner);
+    this.drawHealthBar(pos.x, pos.y - this.cellSize * 0.46, king.hp, king.maxHp, owner, 'king');
   }
 
   private drawChessPiece(
     uid: string,
-    pieceType: string,
+    pieceType: UnitType,
     owner: PlayerId,
     cx: number,
     cy: number,
@@ -984,23 +1108,159 @@ export class GameRenderer {
       ctx.fillText(symbol, cx, cy);
     }
 
-    this.drawHealthBar(cx, cy - this.cellSize * 0.44, hp, maxHp, owner);
+    this.drawHealthBar(cx, cy - this.cellSize * 0.44, hp, maxHp, owner, pieceType);
   }
 
-  private drawHealthBar(cx: number, cy: number, hp: number, maxHp: number, owner: PlayerId): void {
+  private drawHealthBar(
+    cx: number,
+    cy: number,
+    hp: number,
+    maxHp: number,
+    owner: PlayerId,
+    pieceType: UnitType
+  ): void {
     const ctx = this.ctx;
     const barW = this.cellSize * 0.7;
-    const barH = 3;
+    const barH = Math.max(3, this.cellSize * 0.08);
     const x = cx - barW / 2;
     const y = cy;
-
-    const pct = Math.max(0, Math.min(1, hp / maxHp));
+    const damagePerHit = CHESS_PIECES[`piece.${pieceType}`]?.attackDamage ?? maxHp;
+    const rawSectorCount = Math.max(1, Math.ceil(maxHp / damagePerHit));
+    const sectorCount = Math.min(8, rawSectorCount);
+    const sectorCapacity = rawSectorCount > sectorCount ? maxHp / sectorCount : damagePerHit;
+    const gap = Math.min(1, barW / (sectorCount * 4));
+    const sectorW = (barW - gap * (sectorCount - 1)) / sectorCount;
 
     ctx.fillStyle = '#141A24';
     ctx.fillRect(x, y, barW, barH);
 
     ctx.fillStyle = owner === 'player' ? '#39D0FF' : '#FF4757';
-    ctx.fillRect(x, y, barW * pct, barH);
+    for (let sector = 0; sector < sectorCount; sector++) {
+      const sectorHp = Math.max(0, Math.min(sectorCapacity, hp - sector * sectorCapacity));
+      if (sectorHp <= 0) continue;
+      const fill = sectorHp / Math.min(sectorCapacity, maxHp - sector * sectorCapacity);
+      ctx.fillRect(x + sector * (sectorW + gap), y, sectorW * fill, barH);
+    }
+  }
+
+  private drawPieceBurst(burst: PieceBurst): void {
+    const ctx = this.ctx;
+    const t = burst.progress;
+    const alpha = burst.kind === 'death' ? 1 - t : Math.sin(t * Math.PI);
+    const scale = burst.kind === 'death'
+      ? 1 + t * 0.75
+      : 0.25 + (1 - Math.pow(1 - t, 3)) * 0.85;
+    const radius = this.cellSize * 0.38 * scale;
+
+    ctx.save();
+    ctx.translate(burst.x, burst.y);
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = burst.color;
+    ctx.fillStyle = burst.color;
+    ctx.lineWidth = 2;
+    ctx.lineJoin = 'bevel';
+    ctx.shadowColor = burst.color;
+    ctx.shadowBlur = 8;
+    ctx.setLineDash(burst.kind === 'death' ? [3, 3] : []);
+
+    if (burst.pieceType === 'pawn') {
+      ctx.translate(0, -this.cellSize * 0.18);
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(0, radius * 0.72);
+      ctx.lineTo(0, -radius * 0.82);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(0, -radius * 0.24);
+      ctx.quadraticCurveTo(-radius * 0.78, -radius * 0.3, -radius * 0.72, -radius * 0.82);
+      ctx.quadraticCurveTo(-radius * 0.16, -radius * 0.72, 0, -radius * 0.24);
+      ctx.moveTo(0, -radius * 0.02);
+      ctx.quadraticCurveTo(radius * 0.78, -radius * 0.08, radius * 0.72, -radius * 0.6);
+      ctx.quadraticCurveTo(radius * 0.16, -radius * 0.5, 0, -radius * 0.02);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(0, radius * 0.58, Math.max(2.5, radius * 0.2), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(-radius * 0.86, radius * 0.08, 2, 0, Math.PI * 2);
+      ctx.arc(radius * 0.9, -radius * 0.18, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (burst.pieceType === 'knight') {
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(-radius * 0.72, radius * 0.62);
+      ctx.lineTo(-radius * 0.72, -radius * 0.58);
+      ctx.lineTo(radius * 0.15, -radius * 0.58);
+      ctx.lineTo(radius * 0.15, radius * 0.1);
+      ctx.lineTo(radius * 0.72, radius * 0.1);
+      ctx.stroke();
+      ctx.fillRect(-radius * 0.82, -radius * 0.68, Math.max(3, radius * 0.2), Math.max(3, radius * 0.2));
+    } else if (burst.pieceType === 'bishop') {
+      ctx.lineWidth = 1.5;
+      for (const offset of [-radius * 0.16, radius * 0.16]) {
+        ctx.beginPath();
+        ctx.moveTo(-radius + offset, radius);
+        ctx.lineTo(radius + offset, -radius);
+        ctx.stroke();
+      }
+      ctx.beginPath();
+      ctx.moveTo(0, -radius * 0.72);
+      ctx.lineTo(radius * 0.46, 0);
+      ctx.lineTo(0, radius * 0.72);
+      ctx.lineTo(-radius * 0.46, 0);
+      ctx.closePath();
+      ctx.stroke();
+    } else if (burst.pieceType === 'rook') {
+      ctx.lineWidth = 3;
+      ctx.strokeRect(-radius * 0.72, -radius * 0.72, radius * 1.44, radius * 1.44);
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(-radius, -radius, radius * 2, radius * 2);
+      for (const x of [-radius * 0.55, 0, radius * 0.55]) {
+        ctx.fillRect(x - radius * 0.12, -radius, radius * 0.24, radius * 0.28);
+      }
+    } else if (burst.pieceType === 'queen') {
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(0, 0, radius * 0.42, 0, Math.PI * 2);
+      ctx.stroke();
+      for (let petal = 0; petal < 8; petal++) {
+        const angle = petal * Math.PI / 4 + t * 0.9;
+        const innerX = Math.cos(angle) * radius * 0.32;
+        const innerY = Math.sin(angle) * radius * 0.32;
+        const outerX = Math.cos(angle) * radius;
+        const outerY = Math.sin(angle) * radius;
+        ctx.beginPath();
+        ctx.moveTo(innerX, innerY);
+        ctx.quadraticCurveTo(
+          Math.cos(angle + 0.32) * radius * 0.78,
+          Math.sin(angle + 0.32) * radius * 0.78,
+          outerX,
+          outerY
+        );
+        ctx.stroke();
+      }
+    } else {
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      for (let point = 0; point < 6; point++) {
+        const angle = -Math.PI / 2 + point * Math.PI / 3;
+        const x = Math.cos(angle) * radius;
+        const y = Math.sin(angle) * radius;
+        point === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-radius * 0.62, radius * 0.18);
+      ctx.lineTo(-radius * 0.48, -radius * 0.5);
+      ctx.lineTo(0, -radius * 0.08);
+      ctx.lineTo(radius * 0.48, -radius * 0.5);
+      ctx.lineTo(radius * 0.62, radius * 0.18);
+      ctx.closePath();
+      ctx.stroke();
+    }
+
+    ctx.restore();
   }
 
   private drawEffects(dt: number): void {
@@ -1017,57 +1277,141 @@ export class GameRenderer {
 
       ctx.save();
       const alpha = 1.0 - s.progress;
+      const travel = Math.min(1, s.progress * 2.2);
+      const dx = s.toX - s.fromX;
+      const dy = s.toY - s.fromY;
+      const distance = Math.max(1, Math.hypot(dx, dy));
+      const normalX = -dy / distance;
+      const normalY = dx / distance;
+      const headX = s.fromX + dx * travel;
+      const headY = s.fromY + dy * travel;
       ctx.globalAlpha = alpha;
 
       if (s.pieceType === 'queen') {
-        // Queen: Royal sweeping energy beam
         ctx.strokeStyle = s.color;
-        ctx.lineWidth = 4;
+        ctx.lineWidth = 2.5;
         ctx.shadowColor = s.color;
         ctx.shadowBlur = 12;
-        ctx.beginPath();
-        ctx.moveTo(s.fromX, s.fromY);
-        ctx.lineTo(s.toX, s.toY);
-        ctx.stroke();
+        for (const bend of [-7, 0, 7]) {
+          ctx.beginPath();
+          ctx.moveTo(s.fromX, s.fromY);
+          ctx.quadraticCurveTo(
+            (s.fromX + headX) / 2 + normalX * bend,
+            (s.fromY + headY) / 2 + normalY * bend,
+            headX,
+            headY
+          );
+          ctx.stroke();
+        }
+        const bloomRadius = this.cellSize * (0.14 + s.progress * 0.24);
+        for (let petal = 0; petal < 8; petal++) {
+          const angle = petal * Math.PI / 4 + s.progress * 0.8;
+          ctx.beginPath();
+          ctx.moveTo(s.toX + Math.cos(angle) * bloomRadius * 0.45, s.toY + Math.sin(angle) * bloomRadius * 0.45);
+          ctx.lineTo(s.toX + Math.cos(angle) * bloomRadius, s.toY + Math.sin(angle) * bloomRadius);
+          ctx.stroke();
+        }
       } else if (s.pieceType === 'rook') {
-        // Rook: Heavy battering ram blast
-        ctx.strokeStyle = '#FFE600';
-        ctx.lineWidth = 4;
-        ctx.shadowColor = '#FFE600';
+        ctx.strokeStyle = s.color;
+        ctx.lineWidth = 6;
+        ctx.lineCap = 'square';
+        ctx.shadowColor = s.color;
         ctx.shadowBlur = 10;
         ctx.beginPath();
         ctx.moveTo(s.fromX, s.fromY);
-        ctx.lineTo(s.toX, s.toY);
+        ctx.lineTo(headX, headY);
         ctx.stroke();
-      } else if (s.pieceType === 'bishop') {
-        // Bishop: Diagonal laser slice
-        ctx.strokeStyle = s.color;
+        const bastionSize = this.cellSize * (0.18 + s.progress * 0.2);
+        ctx.strokeStyle = '#FFE600';
         ctx.lineWidth = 3;
+        ctx.strokeRect(s.toX - bastionSize, s.toY - bastionSize, bastionSize * 2, bastionSize * 2);
+      } else if (s.pieceType === 'bishop') {
+        ctx.strokeStyle = s.color;
+        ctx.lineWidth = 1.5;
+        ctx.shadowColor = s.color;
+        ctx.shadowBlur = 8;
+        for (const offset of [-3, 3]) {
+          ctx.beginPath();
+          ctx.moveTo(s.fromX + normalX * offset, s.fromY + normalY * offset);
+          ctx.lineTo(headX + normalX * offset, headY + normalY * offset);
+          ctx.stroke();
+        }
+        const prism = this.cellSize * (0.12 + s.progress * 0.12);
         ctx.beginPath();
-        ctx.moveTo(s.fromX, s.fromY);
-        ctx.lineTo(s.toX, s.toY);
+        ctx.moveTo(s.toX, s.toY - prism);
+        ctx.lineTo(s.toX + prism, s.toY);
+        ctx.lineTo(s.toX, s.toY + prism);
+        ctx.lineTo(s.toX - prism, s.toY);
+        ctx.closePath();
         ctx.stroke();
       } else if (s.pieceType === 'knight') {
-        // Knight: Arcing crescent slash
-        ctx.strokeStyle = '#A6FF3F';
+        ctx.strokeStyle = s.color;
         ctx.lineWidth = 3.5;
+        ctx.lineJoin = 'bevel';
+        const elbowX = s.fromX;
+        const elbowY = s.toY;
+        const firstLegRatio = Math.abs(dy) / (Math.abs(dx) + Math.abs(dy));
         ctx.beginPath();
-        const midX = (s.fromX + s.toX) / 2;
-        const midY = (s.fromY + s.toY) / 2 - 18;
         ctx.moveTo(s.fromX, s.fromY);
-        ctx.quadraticCurveTo(midX, midY, s.toX, s.toY);
+        if (travel <= firstLegRatio) {
+          const legProgress = firstLegRatio === 0 ? 1 : travel / firstLegRatio;
+          ctx.lineTo(elbowX, s.fromY + dy * legProgress);
+        } else {
+          const legProgress = (travel - firstLegRatio) / Math.max(0.001, 1 - firstLegRatio);
+          ctx.lineTo(elbowX, elbowY);
+          ctx.lineTo(elbowX + dx * legProgress, elbowY);
+        }
+        ctx.stroke();
+        ctx.fillStyle = '#A6FF3F';
+        ctx.fillRect(elbowX - 2.5, elbowY - 2.5, 5, 5);
+      } else if (s.pieceType === 'king') {
+        ctx.strokeStyle = s.color;
+        ctx.lineWidth = 3;
+        ctx.shadowColor = s.color;
+        ctx.shadowBlur = 9;
+        ctx.beginPath();
+        ctx.moveTo(s.fromX, s.fromY);
+        ctx.lineTo(headX, headY);
+        ctx.stroke();
+        const ward = this.cellSize * (0.16 + s.progress * 0.18);
+        ctx.strokeStyle = '#FFE600';
+        ctx.beginPath();
+        for (let point = 0; point < 6; point++) {
+          const angle = -Math.PI / 2 + point * Math.PI / 3;
+          const x = s.toX + Math.cos(angle) * ward;
+          const y = s.toY + Math.sin(angle) * ward;
+          point === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+        }
+        ctx.closePath();
         ctx.stroke();
       } else {
-        // Pawn / King: Direct sharp thrust line
         ctx.strokeStyle = s.color;
         ctx.lineWidth = 2.5;
         ctx.beginPath();
         ctx.moveTo(s.fromX, s.fromY);
-        ctx.lineTo(s.toX, s.toY);
+        ctx.lineTo(headX, headY);
         ctx.stroke();
+        const arrow = this.cellSize * 0.16;
+        ctx.fillStyle = s.color;
+        ctx.beginPath();
+        ctx.moveTo(headX, headY);
+        ctx.lineTo(headX - dx / distance * arrow + normalX * arrow * 0.55, headY - dy / distance * arrow + normalY * arrow * 0.55);
+        ctx.lineTo(headX - dx / distance * arrow - normalX * arrow * 0.55, headY - dy / distance * arrow - normalY * arrow * 0.55);
+        ctx.closePath();
+        ctx.fill();
       }
 
       ctx.restore();
+    }
+
+    for (let i = this.pieceBursts.length - 1; i >= 0; i--) {
+      const burst = this.pieceBursts[i];
+      burst.progress += dt / burst.duration;
+      if (burst.progress >= 1) {
+        this.pieceBursts.splice(i, 1);
+        continue;
+      }
+      this.drawPieceBurst(burst);
     }
 
     // 2. Coronation Animations (Pawn -> Queen Ascension)

@@ -191,6 +191,7 @@ function setupNetworkHandlers(): void {
       const remoteIntent = { ...intent, playerId: 'enemy' as const };
       const success = sim.deployPiece(remoteIntent.playerId, remoteIntent.cardId, remoteIntent.col, remoteIntent.row);
       if (success) {
+        renderer.pushEvents(sim.events.slice(-1), sim.getSnapshot());
         sound.playDeploy();
         const def = CHESS_PIECES[remoteIntent.cardId];
         if (def) {
@@ -205,6 +206,7 @@ function setupNetworkHandlers(): void {
     if (net.role === 'host') {
       const success = sim.moveKing('enemy', move.targetCol, move.targetRow);
       if (success) {
+        renderer.pushEvents(sim.events.slice(-1), sim.getSnapshot());
         sound.playDeploy();
         net.sendSync(sim.getSnapshot(), sim.events);
       }
@@ -359,6 +361,7 @@ function setupDeckUI(): void {
               } else {
                 const ok = sim.deployPiece(activePlayerId, cardId, cell.col, cell.row);
                 if (ok) {
+                  renderer.pushEvents(sim.events.slice(-1), sim.getSnapshot());
                   triggerHaptic(25);
                   sound.playDeploy();
                   deselectCard();
@@ -560,6 +563,7 @@ function setupInputHandlers(): void {
         } else {
           const ok = sim.moveKing(activePlayerId, cell.col, cell.row);
           if (ok) {
+            renderer.pushEvents(sim.events.slice(-1), sim.getSnapshot());
             triggerHaptic(25);
             sound.playDeploy();
             deselectKing();
@@ -599,6 +603,7 @@ function setupInputHandlers(): void {
         } else {
           const ok = sim.deployPiece(activePlayerId, selectedCardId, cell.col, cell.row);
           if (ok) {
+            renderer.pushEvents(sim.events.slice(-1), sim.getSnapshot());
             triggerHaptic(20);
             sound.playDeploy();
             deselectCard();
@@ -917,6 +922,7 @@ function gameLoop(now: number): void {
         if (botIntent) {
           const ok = sim.deployPiece(botIntent.playerId, botIntent.cardId, botIntent.col, botIntent.row);
           if (ok) {
+            renderer.pushEvents(sim.events.slice(-1), sim.getSnapshot());
             const def = CHESS_PIECES[botIntent.cardId];
             if (def) {
               showAiToast(`BOT DEPLOYED ${def.name.toUpperCase()}`);

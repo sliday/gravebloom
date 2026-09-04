@@ -81,11 +81,11 @@ export const CHESS_PIECES: Record<string, UnitDefinition> = {
   }
 };
 
-// Standard playable deck (Pawn, Knight, Bishop, Rook, Queen)
+// Standard playable deck (Pawn, Bishop, Knight, Rook, Queen)
 export const DECK_PIECES: string[] = [
   'piece.pawn',
-  'piece.knight',
   'piece.bishop',
+  'piece.knight',
   'piece.rook',
   'piece.queen'
 ];

@@ -602,6 +602,7 @@ canvas#game-canvas {
 .essence-meter {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
 }
 
@@ -616,20 +617,20 @@ canvas#game-canvas {
 }
 
 .essence-track {
-  flex: 1;
-  height: 8px;
-  background: #141A24;
-  border: 1px solid var(--pal-grid);
-  border-radius: 3px;
-  overflow: hidden;
   position: relative;
+  background: #131D29;
+  border: 1px solid var(--pal-grid);
+  border-radius: 4px;
+  overflow: hidden;
 }
 
 .essence-fill {
-  height: 100%;
-  background: linear-gradient(90deg, #1B6E96, #39D0FF);
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: linear-gradient(90deg, rgba(42, 127, 163, 0.68), rgba(75, 187, 224, 0.52));
   transition: width 0.1s linear;
-  box-shadow: 0 0 8px rgba(57, 208, 255, 0.4);
+  box-shadow: 3px 0 10px rgba(57, 208, 255, 0.32);
+  pointer-events: none;
 }
 
 .king-hint-label {
@@ -641,6 +642,8 @@ canvas#game-canvas {
 
 /* CARD DECK HAND */
 .cards-grid {
+  position: relative;
+  z-index: 1;
   display: grid;
   grid-template-columns: repeat(5, 1fr);
   gap: 4px;
@@ -649,7 +652,7 @@ canvas#game-canvas {
 
 .card-item {
   position: relative;
-  background: var(--pal-card-bg);
+  background: rgba(11, 15, 22, 0.74);
   border: 1px solid var(--pal-card-border);
   border-radius: 4px;
   padding: 2px 2px;
@@ -677,8 +680,18 @@ canvas#game-canvas {
 }
 
 .card-item.disabled {
-  opacity: 0.4;
-  filter: grayscale(0.5);
+  cursor: default;
+}
+
+.card-item.disabled > :not(.cooldown-overlay) {
+  opacity: 0.46;
+  filter: grayscale(0.3);
+}
+
+.card-item:not(.disabled):not(.selected) {
+  background: rgba(38, 117, 148, 0.34);
+  border-color: rgba(105, 218, 255, 0.72);
+  box-shadow: inset 0 0 9px rgba(57, 208, 255, 0.14);
 }
 
 .card-cost {
@@ -747,6 +760,7 @@ canvas#game-canvas {
 .cooldown-overlay {
   position: absolute;
   inset: 0;
+  z-index: 2;
   background: rgba(11, 14, 19, 0.82);
   border-radius: 3px;
   display: flex;
