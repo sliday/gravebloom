@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0B0E13" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>GRAVEBLOOM — Real-time Chess Tactics</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@600;700&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./src/style.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- TOP STATUS BAR -->
+    <header class="header-bar">
+      <div class="brand-title">
+        <i class="hn hn-crown"></i>
+        <span>GRAVE</span><span class="brand-bloom">BLOOM</span>
+      </div>
+
+      <!-- Live Online Counter (Real-time Cloudflare Presence) -->
+      <div class="online-badge" id="online-badge" title="Players online right now">
+        <span class="online-dot"></span>
+        <span id="online-count-num">1</span> <span class="online-text">ONLINE</span>
+      </div>
+
+      <div class="header-center">
+        <!-- AI Difficulty -->
+        <button id="btn-diff" class="diff-badge" title="AI Difficulty">
+          <i class="hn hn-robot"></i> <span id="diff-label">APPRENTICE</span>
+        </button>
+
+        <!-- Mode Buttons -->
+        <div class="mode-selector">
+          <button id="btn-mode-bot" class="mode-btn active" title="Play vs Computer">VS BOT</button>
+          <button id="btn-mode-hotseat" class="mode-btn" title="Open 1v1 Lobby">1v1 LOBBY</button>
+        </div>
+
+        <!-- Match Restart Button (Explicitly in Header) -->
+        <button id="btn-restart" class="restart-btn" title="Restart Game Match">
+          <i class="hn hn-refresh"></i> <span>RESTART</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- ON-BOARD KINGS HUD -->
+    <section class="core-hud">
+      <div class="core-panel">
+        <div class="core-header">
+          <span class="core-enemy-text">
+            ♚ BOT KING
+          </span>
+          <span id="enemy-core-num" class="core-num">200</span>
+        </div>
+        <div class="hp-track">
+          <div id="enemy-core-bar" class="hp-fill hp-enemy" style="width: 100%;"></div>
+        </div>
+      </div>
+
+      <div class="timer-box">
+        <div id="match-clock" class="match-clock">03:00</div>
+        <div id="overtime-badge" class="overtime-badge" style="display: none;">OVERTIME</div>
+      </div>
+
+      <div class="core-panel">
+        <div class="core-header">
+          <span class="core-player-text">
+            ♚ YOUR KING
+          </span>
+          <span id="player-core-num" class="core-num">200</span>
+        </div>
+        <div class="hp-track">
+          <div id="player-core-bar" class="hp-fill hp-player" style="width: 100%;"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- DEDICATED TOP INFO STRIP (Free of canvas, never blocks rows 1-16) -->
+    <div class="top-info-strip" id="top-info-strip">
+      <div id="top-info-message" class="top-info-message">
+        <span class="default-info-hint">⚔️ HUNT ENEMY KING · PROTECT YOUR KING</span>
+      </div>
+      <button id="btn-cancel-hint" class="btn-cancel-hint" style="display: none;">CANCEL</button>
+    </div>
+
+    <!-- CANVAS PLAYFIELD (Rows 1 to 14, 100% unobstructed) -->
+    <main class="playfield-container">
+      <canvas id="game-canvas"></canvas>
+
+      <!-- VERTICAL SIDE CONTROL DOCK (Music, Sound, Restart) -->
+      <aside class="side-control-dock" id="side-dock">
+        <div class="vertical-music-widget">
+          <button id="btn-music-toggle" class="side-dock-btn music-btn active" title="Toggle Jazz MIDI Music">
+            <span id="music-note">🎷</span>
+          </button>
+          <div class="vertical-track-label">
+            <span id="music-track-title">AUTUMN LEAVES</span>
+          </div>
+          <button id="btn-music-next" class="side-dock-btn nav-btn" title="Next Jazz Track" aria-label="Next Track">
+            <i class="hn hn-angle-down"></i>
+          </button>
+          <button id="btn-music-shuffle" class="side-dock-btn nav-btn" title="Shuffle Jazz Song" aria-label="Shuffle Song">
+            <i class="hn hn-refresh"></i>
+          </button>
+        </div>
+
+        <div class="side-dock-divider"></div>
+
+        <button id="btn-sound" class="side-dock-btn" title="Toggle SFX" aria-label="Toggle Sound">
+          <i id="sound-icon" class="hn hn-bell"></i>
+        </button>
+      </aside>
+    </main>
+
+    <!-- BOTTOM CONTROLS & ESSENCE -->
+    <footer class="bottom-controls">
+      <div class="essence-meter">
+        <div class="essence-label">
+          <i class="hn hn-bolt"></i>
+          <span id="essence-num">35 / 100</span>
+        </div>
+        <div class="essence-track">
+          <div id="essence-bar" class="essence-fill" style="width: 35%;"></div>
+        </div>
+        <div class="king-hint-label">
+          <span>👑 TAP KING TO RUN</span>
+        </div>
+      </div>
+
+      <!-- CHESS PIECES HAND -->
+      <div id="cards-grid" class="cards-grid chess-deck">
+        <!-- Dynamically rendered pieces -->
+      </div>
+    </footer>
+
+    <!-- 1v1 P2P INVITE & LOBBY MODAL -->
+    <div id="p2p-modal" class="modal-backdrop" style="display: none;">
+      <div class="modal-card">
+        <div class="modal-title" style="color: var(--pal-ui);">
+          <i class="hn hn-trophy"></i> MULTIPLAYER LOBBY
+        </div>
+        <div class="modal-desc">Play live in real time against online players or invite a friend.</div>
+
+        <!-- OPEN LOBBY QUICK MATCH -->
+        <div class="lobby-card">
+          <div class="lobby-header">
+            <span class="lobby-tag"><span class="pulse-dot"></span> PUBLIC LOBBY</span>
+            <span style="font-size: 10px; color: var(--pal-text-muted);">PLAY WITH ANYONE ONLINE NOW</span>
+          </div>
+          <button id="btn-quick-match" class="btn-primary" style="width: 100%; padding: 10px; font-size: 12px; font-weight: 700; letter-spacing: 0.05em;">
+            ⚡ FIND OPPONENT (PLAY NOW)
+          </button>
+          <div id="lobby-status-text" class="lobby-status" style="display: none;">
+            <span class="pulse-dot"></span> <span id="lobby-status-msg">Searching for online player...</span>
+          </div>
+        </div>
+
+        <div class="divider-or"><span>OR INVITE A FRIEND PRIVATELY</span></div>
+
+        <div class="invite-box">
+          <div class="invite-label">YOUR UNIQUE INVITE LINK:</div>
+          <div class="invite-link-row">
+            <input type="text" id="invite-url-input" class="invite-input" readonly value="Generating..." />
+            <button id="btn-copy-invite" class="btn-secondary" style="padding: 6px 12px; font-size: 11px; font-weight: 700;">COPY</button>
+          </div>
+          <button id="btn-native-share" class="btn-share" style="display: none;">
+            <i class="hn hn-users"></i> SHARE LINK (WHATSAPP, TELEGRAM, SMS)
+          </button>
+          <div class="invite-status">
+            <span class="pulse-dot"></span>
+            <span id="invite-status-text">Room link active. Send to friend!</span>
+          </div>
+        </div>
+
+        <div class="divider-or"><span>OR JOIN WITH 4-DIGIT CODE</span></div>
+
+        <div style="display: flex; gap: 6px;">
+          <input type="text" id="join-code-input" class="invite-input" placeholder="Enter code (e.g. 7421)" maxlength="6" />
+          <button id="btn-join-code" class="btn-secondary" style="font-weight: 700;">JOIN</button>
+        </div>
+
+        <div style="display: flex; gap: 8px; margin-top: 4px;">
+          <button id="btn-local-pass" class="btn-secondary" style="flex: 1;">PASS & PLAY (OFFLINE)</button>
+          <button id="btn-close-p2p" class="btn-secondary">CLOSE</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MATCH OVER MODAL -->
+    <div id="game-over-modal" class="modal-backdrop" style="display: none;">
+      <div class="modal-card">
+        <div id="modal-verdict" class="modal-title">VICTORY</div>
+        <div id="modal-reason" class="modal-desc">Enemy King was checkmated</div>
+        <table class="stats-table">
+          <tr>
+            <th>Player</th>
+            <th>Your King</th>
+            <th>Bot King</th>
+          </tr>
+          <tr>
+            <td>Final Health</td>
+            <td id="stat-p-hp">200</td>
+            <td id="stat-e-hp">0</td>
+          </tr>
+          <tr>
+            <td>Match Duration</td>
+            <td id="stat-duration" colspan="2" style="text-align: center;">02:14</td>
+          </tr>
+        </table>
+        <button id="btn-rematch" class="btn-primary">PLAY AGAIN</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="./src/main.ts"></script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+{
+  "name": "gravebloom",
+  "version": "0.1.0",
+  "description": "GRAVEBLOOM - Real-time 1v1 lane tactics (Plants-vs-Zombies structure x chess movement)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@hackernoon/pixel-icon-library": "^1.1.0",
+    "peerjs": "^1.5.5",
+    "pixi.js": "^8.20.1",
+    "smplr": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11"
+  }
+}
