@@ -118,6 +118,7 @@ export class GameSim {
     if (this.isGameOver) return false;
     const king = playerId === 'player' ? this.playerKing : this.enemyKing;
     if (king.hp <= 0) return false;
+    if (king.moveCooldown > Number.EPSILON) return false;
     if (!isInsideBoard(targetCol, targetRow)) return false;
 
     // King moves 1 square in all 8 directions strictly within friendly half
@@ -134,6 +135,7 @@ export class GameSim {
     const fromRow = king.row;
     king.col = targetCol;
     king.row = targetRow;
+    king.moveCooldown = 0.7;
 
     this.events.push({
       type: 'king_move',
@@ -156,6 +158,12 @@ export class GameSim {
 
     // 1. Timer check
     this.updateMatchTimer();
+    if (this.isGameOver) {
+      for (const ev of this.events) {
+        this.eventLog.push(ev);
+      }
+      return this.events;
+    }
 
     // 2. Economy
     this.updateEconomy(dt);
@@ -261,6 +269,7 @@ export class GameSim {
     if (!def) return false;
 
     const pState = playerId === 'player' ? this.player : this.enemy;
+    if (!pState.deck.includes(cardId)) return false;
 
     if (pState.essence < def.cost) return false;
     if ((pState.cooldowns[cardId] ?? 0) > 0) return false;
@@ -957,7 +966,7 @@ export class GameSim {
       if (king.hp <= 0) continue;
 
       if (king.moveCooldown > 0) {
-        king.moveCooldown -= dt;
+        king.moveCooldown = Math.max(0, king.moveCooldown - dt);
       }
 
       // KING TACTICAL EVASION:

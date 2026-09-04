@@ -1,0 +1,12 @@
+name = "gravebloom-coordinator"
+main = "worker/coordinator.ts"
+compatibility_date = "2026-09-02"
+workers_dev = false
+
+[[durable_objects.bindings]]
+name = "GAME_COORDINATOR"
+class_name = "GameCoordinator"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["GameCoordinator"]

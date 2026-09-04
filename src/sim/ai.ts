@@ -44,8 +44,14 @@ export class BotAI {
     this.nextDecisionTime = sim.matchTime + this.decisionInterval;
 
     // Piece deployment on legal half
+    const hasActiveQueen = sim.pieces.some(
+      (p) => p.owner === this.playerId && p.pieceType === 'queen' && p.hp > 0
+    );
     const availableCards = pState.deck.filter(
-      (c) => (pState.cooldowns[c] ?? 0) <= 0 && pState.essence >= CHESS_PIECES[c]?.cost
+      (c) =>
+        (pState.cooldowns[c] ?? 0) <= 0 &&
+        pState.essence >= CHESS_PIECES[c]?.cost &&
+        (c !== 'piece.queen' || !hasActiveQueen)
     );
     if (availableCards.length === 0) return null;
 

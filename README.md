@@ -86,8 +86,9 @@ npm run preview
 ## Deployment to Cloudflare Pages
 
 ```bash
-# Deploy production build to Cloudflare Pages
-npx wrangler pages deploy dist --project-name gravebloom --branch main
+# Deploy the shared matchmaking coordinator, then the Pages build and Functions
+npm run deploy:coordinator
+npm run deploy:pages
 ```
 
 ---

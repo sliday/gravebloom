@@ -23,6 +23,7 @@ let selectedCardId: string | null = null;
 let activePlayerId: PlayerId = 'player';
 let aiToastTimeout: ReturnType<typeof setTimeout> | null = null;
 let syncBroadcastTimer = 0;
+const MAX_CATCH_UP_TICKS = 20;
 
 // DOM elements
 const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
@@ -153,6 +154,7 @@ async function init(): Promise<void> {
     joinOnlineRoom(roomParam);
   }
 
+  lastTime = performance.now();
   requestAnimationFrame(gameLoop);
 }
 
@@ -186,10 +188,11 @@ function setupNetworkHandlers(): void {
 
   net.onRemoteIntent = (intent) => {
     if (net.role === 'host') {
-      const success = sim.deployPiece(intent.playerId, intent.cardId, intent.col, intent.row);
+      const remoteIntent = { ...intent, playerId: 'enemy' as const };
+      const success = sim.deployPiece(remoteIntent.playerId, remoteIntent.cardId, remoteIntent.col, remoteIntent.row);
       if (success) {
         sound.playDeploy();
-        const def = CHESS_PIECES[intent.cardId];
+        const def = CHESS_PIECES[remoteIntent.cardId];
         if (def) {
           showAiToast(`FRIEND DEPLOYED ${def.name.toUpperCase()}`);
         }
@@ -200,7 +203,7 @@ function setupNetworkHandlers(): void {
 
   net.onRemoteKingMove = (move) => {
     if (net.role === 'host') {
-      const success = sim.moveKing(move.playerId, move.targetCol, move.targetRow);
+      const success = sim.moveKing('enemy', move.targetCol, move.targetRow);
       if (success) {
         sound.playDeploy();
         net.sendSync(sim.getSnapshot(), sim.events);
@@ -223,7 +226,9 @@ function setupNetworkHandlers(): void {
   };
 
   net.onDisconnected = () => {
-    showAiToast('FRIEND DISCONNECTED');
+    const disconnectedMode = currentMode;
+    if (disconnectedMode !== 'p2p-host' && disconnectedMode !== 'p2p-guest') return;
+
     currentMode = 'bot';
     activePlayerId = 'player';
     renderer.isFlipped = false;
@@ -232,8 +237,12 @@ function setupNetworkHandlers(): void {
     btnDiff.style.display = 'flex';
     const enemyLabel = document.querySelector('.core-enemy-text');
     if (enemyLabel) enemyLabel.innerHTML = '♚ BOT KING';
-    setupDeckUI();
+    if (disconnectedMode === 'p2p-guest') restartMatch();
+    else setupDeckUI();
     updateHUD();
+    showAiToast(disconnectedMode === 'p2p-guest'
+      ? 'FRIEND DISCONNECTED. STARTING BOT MATCH!'
+      : 'FRIEND DISCONNECTED');
   };
 
   net.onRematchRequested = () => {
@@ -356,6 +365,7 @@ function setupDeckUI(): void {
                   if (currentMode === 'p2p-host') {
                     net.sendSync(sim.getSnapshot(), sim.events);
                   }
+                  passHotseatTurn();
                 }
               }
             } else {
@@ -392,7 +402,12 @@ function updateTopInfoStrip(): void {
 
   // 1. If an alert is active (e.g. BOT DEPLOYED), show ONLY the alert!
   if (activeAlertText) {
-    topInfoMessage.innerHTML = `<span class="top-announcement"><i class="hn hn-robot"></i> ${activeAlertText}</span>`;
+    const announcement = document.createElement('span');
+    const icon = document.createElement('i');
+    announcement.className = 'top-announcement';
+    icon.className = 'hn hn-robot';
+    announcement.append(icon, document.createTextNode(` ${activeAlertText}`));
+    topInfoMessage.replaceChildren(announcement);
     if (btnCancelHint) btnCancelHint.style.display = 'none';
     return;
   }
@@ -461,6 +476,16 @@ function selectKing(): void {
 function deselectKing(): void {
   renderer.isKingSelected = false;
   updateTopInfoStrip();
+}
+
+function passHotseatTurn(): void {
+  if (currentMode !== 'hotseat') return;
+
+  activePlayerId = activePlayerId === 'player' ? 'enemy' : 'player';
+  renderer.isFlipped = activePlayerId === 'enemy';
+  setupDeckUI();
+  updateHUD();
+  showAiToast(activePlayerId === 'player' ? 'PASS TO FLORA PLAYER' : 'PASS TO ROT PLAYER');
 }
 
 function showAiToast(text: string): void {
@@ -543,6 +568,7 @@ function setupInputHandlers(): void {
             if (currentMode === 'p2p-host') {
               net.sendSync(sim.getSnapshot(), sim.events);
             }
+            passHotseatTurn();
           }
         }
       } else {
@@ -579,6 +605,7 @@ function setupInputHandlers(): void {
             if (currentMode === 'p2p-host') {
               net.sendSync(sim.getSnapshot(), sim.events);
             }
+            passHotseatTurn();
           }
         }
       } else {
@@ -713,7 +740,7 @@ function setupButtons(): void {
 
     if (quickMatchTimer) clearInterval(quickMatchTimer);
 
-    quickMatchTimer = setInterval(() => {
+    quickMatchTimer = setInterval(async () => {
       secondsLeft--;
       if (net.isConnected) {
         clearInterval(quickMatchTimer!);
@@ -724,6 +751,21 @@ function setupButtons(): void {
         lobbyStatusMsg.textContent = `Searching open lobby for online player... (${secondsLeft}s)`;
       } else {
         clearInterval(quickMatchTimer!);
+        quickMatchTimer = null;
+        const waitingRoomId = net.role === 'host' ? net.roomId : null;
+        if (waitingRoomId) {
+          try {
+            await fetch('/api/lobby', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ peerId: `gb-room-${waitingRoomId}`, action: 'cancel' })
+            });
+          } catch (e) {
+            console.warn('Lobby cancellation error:', e);
+          }
+        }
+        if (net.isConnected) return;
+        net.disconnect();
         // Auto-match challenger bot fallback so player never waits forever
         p2pModal.style.display = 'none';
         lobbyStatusText.style.display = 'none';
@@ -775,6 +817,7 @@ function setupButtons(): void {
     p2pModal.style.display = 'none';
     currentMode = 'hotseat';
     activePlayerId = 'player';
+    renderer.isFlipped = false;
     btnModeBot.classList.remove('active');
     btnModeHotseat.classList.add('active');
     btnDiff.style.display = 'none';
@@ -818,7 +861,13 @@ function setupButtons(): void {
     triggerHaptic(20);
   });
 
-  btnRestart.addEventListener('click', () => restartMatch());
+  btnRestart.addEventListener('click', () => {
+    if (currentMode === 'p2p-guest') {
+      showAiToast('HOST CONTROLS RESTART');
+      return;
+    }
+    restartMatch();
+  });
   btnRematch.addEventListener('click', () => {
     gameOverModal.style.display = 'none';
     if (net.isConnected) net.sendRematch();
@@ -840,21 +889,26 @@ function restartMatch(): void {
   musicTrackTitle.textContent = newSong.toUpperCase();
   btnMusicToggle.classList.remove('paused');
   musicNote.textContent = '🎷';
+  lastTime = performance.now();
+  tickAccumulator = 0;
+  syncBroadcastTimer = 0;
 }
 
 let lastTime = performance.now();
 let tickAccumulator = 0;
 
 function gameLoop(now: number): void {
-  const deltaMs = Math.min(now - lastTime, 100);
+  const deltaMs = Math.max(0, now - lastTime);
   lastTime = now;
   const dt = (deltaMs / 1000) * speedMultiplier;
 
   tickAccumulator += dt;
   syncBroadcastTimer += dt;
 
-  while (tickAccumulator >= 0.1) {
+  let processedTicks = 0;
+  while (tickAccumulator >= 0.1 && processedTicks < MAX_CATCH_UP_TICKS) {
     tickAccumulator -= 0.1;
+    processedTicks++;
 
     if (!sim.isGameOver && currentMode !== 'p2p-guest') {
       // Bot AI update in VS BOT mode
@@ -903,7 +957,7 @@ function gameLoop(now: number): void {
 
   updateHUD();
   const snap = sim.getSnapshot();
-  renderer.render(snap, dt);
+  renderer.render(snap, Math.min(dt, 0.1));
 
   requestAnimationFrame(gameLoop);
 }

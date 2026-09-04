@@ -43,28 +43,39 @@ export class P2PNetwork {
     return new Promise((resolve, reject) => {
       this.disconnect();
       this.role = 'host';
+      let isSettled = false;
 
       const code = customRoomId || Math.floor(1000 + Math.random() * 9000).toString();
       this.roomId = code;
       const peerId = `gb-room-${code}`;
 
-      this.peer = new Peer(peerId, PEER_OPTS);
+      const peer = new Peer(peerId, PEER_OPTS);
+      this.peer = peer;
 
-      this.peer.on('open', () => {
+      peer.on('open', () => {
+        if (this.peer !== peer || isSettled) return;
+        isSettled = true;
         resolve(code);
       });
 
-      this.peer.on('error', (err) => {
+      peer.on('error', (err) => {
         console.warn('Peer host error:', err);
+        if (this.peer !== peer || isSettled) return;
+        isSettled = true;
         if (err.type === 'unavailable-id') {
           // If room ID already held by another peer, connect as guest!
           this.joinGame(code).then(() => resolve(code)).catch(reject);
         } else {
-          resolve(code);
+          this.disconnect();
+          reject(err);
         }
       });
 
-      this.peer.on('connection', (connection) => {
+      peer.on('connection', (connection) => {
+        if (this.peer !== peer || this.conn) {
+          connection.close();
+          return;
+        }
         this.conn = connection;
         this.setupConnectionHandlers();
       });
@@ -78,7 +89,8 @@ export class P2PNetwork {
       this.roomId = roomCode.trim();
 
       const guestPeerId = `gb-guest-${Date.now() % 100000}`;
-      this.peer = new Peer(guestPeerId, PEER_OPTS);
+      const peer = new Peer(guestPeerId, PEER_OPTS);
+      this.peer = peer;
 
       let isHandshakeComplete = false;
       let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
@@ -91,32 +103,37 @@ export class P2PNetwork {
         this.hostGame(roomCode).then(() => resolve()).catch(reject);
       };
 
-      this.peer.on('open', () => {
+      peer.on('open', () => {
+        if (this.peer !== peer || isHandshakeComplete) return;
         const hostPeerId = `gb-room-${this.roomId}`;
-        this.conn = this.peer!.connect(hostPeerId, { reliable: true });
+        const connection = peer.connect(hostPeerId, { reliable: true });
+        this.conn = connection;
 
         // Fallback to auto-hosting if host doesn't answer within 3 seconds
         fallbackTimer = setTimeout(triggerAutoHost, 3000);
 
         this.setupConnectionHandlers();
 
-        this.conn.on('open', () => {
+        connection.on('open', () => {
+          if (this.conn !== connection || isHandshakeComplete) return;
           if (fallbackTimer) clearTimeout(fallbackTimer);
           isHandshakeComplete = true;
-          this.conn?.send({
+          connection.send({
             type: 'handshake',
             senderRole: 'guest'
           });
           resolve();
         });
 
-        this.conn.on('error', (err) => {
+        connection.on('error', (err) => {
+          if (this.conn !== connection || isHandshakeComplete) return;
           console.warn('Connection error, auto-hosting:', err);
           triggerAutoHost();
         });
       });
 
-      this.peer.on('error', (err) => {
+      peer.on('error', (err) => {
+        if (this.peer !== peer || isHandshakeComplete) return;
         console.warn('Peer error on join, auto-hosting:', err);
         triggerAutoHost();
       });
@@ -154,22 +171,25 @@ export class P2PNetwork {
   }
 
   private setupConnectionHandlers(): void {
-    if (!this.conn) return;
+    const connection = this.conn;
+    if (!connection) return;
 
     const triggerOpen = () => {
-      if (this.isConnected) return;
+      if (this.conn !== connection || this.isConnected) return;
       this.isConnected = true;
       console.log(`[P2P] Connection opened as ${this.role} in room ${this.roomId}`);
       if (this.onConnected) this.onConnected();
     };
 
-    if (this.conn.open) {
+    if (connection.open) {
       triggerOpen();
     } else {
-      this.conn.on('open', triggerOpen);
+      connection.on('open', triggerOpen);
     }
 
-    this.conn.on('data', (data) => {
+    connection.on('data', (data) => {
+      if (this.conn !== connection) return;
+
       // Any incoming packet proves DataChannel is active and open
       if (!this.isConnected) {
         triggerOpen();
@@ -177,8 +197,8 @@ export class P2PNetwork {
 
       const msg = data as NetMessage;
       if (msg.type === 'handshake') {
-        if (this.role === 'host') {
-          this.conn?.send({
+        if (this.role === 'host' && msg.senderRole === 'guest') {
+          connection.send({
             type: 'handshake',
             senderRole: 'host'
           });
@@ -186,26 +206,30 @@ export class P2PNetwork {
         return;
       }
 
-      if (msg.type === 'intent' && msg.intent && this.onRemoteIntent) {
+      if (msg.type === 'intent' && this.role === 'host' && msg.senderRole === 'guest' && msg.intent && this.onRemoteIntent) {
         this.onRemoteIntent(msg.intent);
-      } else if (msg.type === 'king_move' && msg.kingMove && this.onRemoteKingMove) {
+      } else if (msg.type === 'king_move' && this.role === 'host' && msg.senderRole === 'guest' && msg.kingMove && this.onRemoteKingMove) {
         this.onRemoteKingMove(msg.kingMove);
-      } else if (msg.type === 'sync' && msg.snapshot && this.onSyncSnapshot) {
-        this.onSyncSnapshot(msg.snapshot);
-      } else if (msg.type === 'event' && msg.events && this.onRemoteEvents) {
+      } else if (msg.type === 'sync' && this.role === 'guest' && msg.senderRole === 'host') {
+        if (msg.snapshot && this.onSyncSnapshot) this.onSyncSnapshot(msg.snapshot);
+        if (msg.events && this.onRemoteEvents) this.onRemoteEvents(msg.events);
+      } else if (msg.type === 'event' && this.role === 'guest' && msg.senderRole === 'host' && msg.events && this.onRemoteEvents) {
         this.onRemoteEvents(msg.events);
       } else if (msg.type === 'rematch' && this.onRematchRequested) {
         this.onRematchRequested();
       }
     });
 
-    this.conn.on('close', () => {
+    connection.on('close', () => {
+      if (this.conn !== connection) return;
       console.log('[P2P] Connection closed');
+      this.conn = null;
       this.isConnected = false;
       if (this.onDisconnected) this.onDisconnected();
     });
 
-    this.conn.on('error', (err) => {
+    connection.on('error', (err) => {
+      if (this.conn !== connection) return;
       console.warn('[P2P] Connection error:', err);
     });
   }

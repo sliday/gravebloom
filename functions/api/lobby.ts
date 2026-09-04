@@ -1,7 +1,7 @@
 // Cloudflare Pages Function for Real-time Lobby Matchmaking
-interface Env {}
-
-let waitingHost: { peerId: string; time: number } | null = null;
+interface Env {
+  GAME_COORDINATOR: DurableObjectNamespace;
+}
 
 export const onRequest: PagesFunction<Env> = async (context) => {
   const { request } = context;
@@ -17,45 +17,6 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     });
   }
 
-  if (request.method === 'POST') {
-    try {
-      const body = (await request.json()) as { peerId: string; action?: string };
-      const now = Date.now();
-
-      // Clear stale host (> 25s)
-      if (waitingHost && (now - waitingHost.time > 25000 || waitingHost.peerId === body.peerId)) {
-        waitingHost = null;
-      }
-
-      if (waitingHost && waitingHost.peerId !== body.peerId) {
-        // Matched! Return the host to this guest
-        const matchedHost = waitingHost.peerId;
-        waitingHost = null; // Consumed
-        return new Response(JSON.stringify({ status: 'matched', hostPeerId: matchedHost }), {
-          headers: {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*'
-          }
-        });
-      } else {
-        // Register this player as the waiting host in lobby
-        waitingHost = { peerId: body.peerId, time: now };
-        return new Response(JSON.stringify({ status: 'waiting' }), {
-          headers: {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*'
-          }
-        });
-      }
-    } catch {
-      return new Response(JSON.stringify({ error: 'invalid_json' }), { status: 400 });
-    }
-  }
-
-  return new Response(
-    JSON.stringify({ status: 'ok', hasWaitingHost: !!waitingHost }),
-    {
-      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }
-    }
-  );
+  const coordinator = context.env.GAME_COORDINATOR.getByName('lobby');
+  return coordinator.fetch(request);
 };

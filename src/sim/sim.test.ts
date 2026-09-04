@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { BotAI } from './ai';
 import { GameSim } from './sim';
 
 describe('GRAVEBLOOM Chess Combat Sim with On-Board Kings', () => {
@@ -13,14 +14,18 @@ describe('GRAVEBLOOM Chess Combat Sim with On-Board Kings', () => {
     expect(sim.enemyKing.hp).toBe(200);
   });
 
-  it('2. King can run around the field in all 8 directions away from danger', () => {
+  it('2. King movement enforces its 0.7 second cooldown', () => {
     const sim = new GameSim(202);
     // Move player king from (4, 1) to (4, 2)
     const success1 = sim.moveKing('player', 4, 2);
     expect(success1).toBe(true);
     expect(sim.playerKing.row).toBe(2);
 
-    // Move diagonally to (5, 3)
+    // Reject another move until the cooldown elapses
+    const tooSoon = sim.moveKing('player', 5, 3);
+    expect(tooSoon).toBe(false);
+
+    sim.stepSeconds(0.7);
     const success2 = sim.moveKing('player', 5, 3);
     expect(success2).toBe(true);
     expect(sim.playerKing.col).toBe(5);
@@ -71,6 +76,35 @@ describe('GRAVEBLOOM Chess Combat Sim with On-Board Kings', () => {
     expect(sim.winner).toBe('player');
   });
 
+  it('stops the expiry tick before combat and records the game-over event', () => {
+    const sim = new GameSim(405);
+    sim.matchDuration = 0.1;
+    sim.playerKing.hp = 10;
+    sim.player.kingHp = 10;
+    sim.enemyKing.hp = 5;
+    sim.enemy.kingHp = 5;
+    sim.pieces.push({
+      uid: 'expiry_rook',
+      defId: 'piece.rook',
+      pieceType: 'rook',
+      owner: 'enemy',
+      col: 4,
+      row: 2,
+      hp: 100,
+      maxHp: 100,
+      moveCooldown: 10,
+      attackCooldown: 0
+    });
+
+    const events = sim.step();
+
+    expect(sim.winner).toBe('player');
+    expect(sim.playerKing.hp).toBe(10);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ type: 'game_over', winner: 'player' });
+    expect(sim.eventLog).toEqual(events);
+  });
+
   it('5. Pawn Promotion: Pawns promote to Queens upon reaching opposing back rank', () => {
     const sim = new GameSim(505);
     // Player pawn at row 15
@@ -109,6 +143,18 @@ describe('GRAVEBLOOM Chess Combat Sim with On-Board Kings', () => {
     // Attempt to deploy another piece on the exact same square (3, 5)
     const ok2 = sim.deployPiece('player', 'piece.knight', 3, 5);
     expect(ok2).toBe(false);
+  });
+
+  it('rejects a registered piece that is not in the player deck', () => {
+    const sim = new GameSim(607);
+    sim.player.essence = 100;
+
+    const deployed = sim.deployPiece('player', 'piece.king', 3, 5);
+
+    expect(deployed).toBe(false);
+    expect(sim.pieces).toHaveLength(0);
+    expect(sim.player.essence).toBe(100);
+    expect(sim.events).toHaveLength(0);
   });
 
   it('7. Player King tactical evasion: King flees when threatened within friendly half', () => {
@@ -443,5 +489,30 @@ describe('GRAVEBLOOM Chess Combat Sim with On-Board Kings', () => {
     // Knight must have selected the Royal Fork square (col 2, row 15)!
     expect(knight.col).toBe(2);
     expect(knight.row).toBe(15);
+  });
+
+  it('Bot AI chooses another affordable card while its Queen is active', () => {
+    const sim = new GameSim(1516);
+    const bot = new BotAI('enemy', 'nightmare');
+    bot.openingDelay = 0;
+    sim.enemy.essence = 100;
+    sim.enemy.cooldowns['piece.queen'] = 0;
+    sim.pieces.push({
+      uid: 'active_enemy_queen',
+      defId: 'piece.queen',
+      pieceType: 'queen',
+      owner: 'enemy',
+      col: 1,
+      row: 10,
+      hp: 280,
+      maxHp: 280,
+      moveCooldown: 10,
+      attackCooldown: 10
+    });
+
+    const intent = bot.update(sim);
+
+    expect(intent).not.toBeNull();
+    expect(intent?.cardId).not.toBe('piece.queen');
   });
 });

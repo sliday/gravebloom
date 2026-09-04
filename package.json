@@ -7,7 +7,10 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "typecheck:cloudflare": "tsc -p tsconfig.cloudflare.json",
+    "deploy:coordinator": "npm run typecheck:cloudflare && wrangler deploy --config wrangler.coordinator.toml",
+    "deploy:pages": "npm run build && wrangler pages deploy --branch main"
   },
   "dependencies": {
     "@hackernoon/pixel-icon-library": "^1.1.0",
@@ -16,9 +19,11 @@
     "smplr": "^1.0.0"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260904.1",
     "@types/node": "^26.4.1",
     "typescript": "^7.0.2",
     "vite": "^8.2.2",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "wrangler": "^4.129.0"
   }
 }
