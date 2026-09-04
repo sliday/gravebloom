@@ -9,3 +9,8 @@ class_name = "GameCoordinator"
 script_name = "gravebloom-coordinator"
 
 [env.production]
+
+[[env.production.durable_objects.bindings]]
+name = "GAME_COORDINATOR"
+class_name = "GameCoordinator"
+script_name = "gravebloom-coordinator"
